@@ -1,0 +1,236 @@
+app.py
+
+from speech_to_text import speech_to_text
+from text_to_braille import text_to_braille
+from braille_scroll_gui import BrailleScrollDisplay
+
+import serial
+import serial.tools.list_ports
+import time
+import sys
+
+
+def find_arduino():
+
+    ports = serial.tools.list_ports.comports()
+
+    for p in ports:
+        if ("Arduino" in p.description or
+            "USB Serial" in p.description or
+            "CH340" in p.description):
+            return p.device
+
+    return None
+
+
+port = find_arduino()
+
+if port is None:
+    print("❌ Arduino NOT detected")
+    sys.exit()
+
+print(f"✅ Arduino detected on {port}")
+
+arduino = serial.Serial(port,9600)
+
+display = BrailleScrollDisplay()
+
+time.sleep(1)
+
+
+def send_to_arduino(binary_cells):
+
+    for cell in binary_cells:
+
+        arduino.write((cell+'\n').encode())
+
+        time.sleep(0.2)
+
+
+print("🎤 Continuous listening started\n")
+
+while True:
+
+    print("🎤 Speak now...")
+
+    text = speech_to_text()
+
+    if not text:
+        continue
+
+    if "stop system" in text:
+        break
+
+    binary,dots = text_to_braille(text)
+
+    print(f"📝 Text          : {text}")
+    print(f"⠿ Braille Dots : {dots}")
+
+    display.scroll(binary)
+
+    send_to_arduino(binary)
+
+    print("✅ Sent to hardware\n")
+
+
+speech_to_text.py
+
+
+import speech_recognition as sr
+
+recognizer = sr.Recognizer()
+recognizer.pause_threshold = 1.2
+
+def speech_to_text():
+
+    with sr.Microphone() as source:
+
+        recognizer.adjust_for_ambient_noise(source, duration=0.5)
+
+        audio = recognizer.listen(source)
+
+    try:
+        text = recognizer.recognize_google(audio)
+        return text.lower()
+
+    except:
+        return ""
+
+text_to_braille.py
+
+BRAILLE_BINARY = {
+'a':'100000','b':'110000','c':'100100','d':'100110','e':'100010',
+'f':'110100','g':'110110','h':'110010','i':'010100','j':'010110',
+'k':'101000','l':'111000','m':'101100','n':'101110','o':'101010',
+'p':'111100','q':'111110','r':'111010','s':'011100','t':'011110',
+'u':'101001','v':'111001','w':'010111','x':'101101','y':'101111',
+'z':'101011',' ':'000000'
+}
+
+BRAILLE_DOTS = {
+'a':'⠁','b':'⠃','c':'⠉','d':'⠙','e':'⠑',
+'f':'⠋','g':'⠛','h':'⠓','i':'⠊','j':'⠚',
+'k':'⠅','l':'⠇','m':'⠍','n':'⠝','o':'⠕',
+'p':'⠏','q':'⠟','r':'⠗','s':'⠎','t':'⠞',
+'u':'⠥','v':'⠧','w':'⠺','x':'⠭','y':'⠽',
+'z':'⠵',' ':' '
+}
+
+def text_to_braille(text):
+
+    text = text.lower()
+
+    binary = [BRAILLE_BINARY.get(ch,'000000') for ch in text]
+
+    dots = ''.join(BRAILLE_DOTS.get(ch,' ') for ch in text)
+
+    return binary, dots
+
+braille_scroll_gui.py
+
+import tkinter as tk
+import time
+
+class BrailleScrollDisplay:
+
+    def __init__(self):
+
+        self.root = tk.Tk()
+        self.root.title("Scrolling Braille Display")
+
+        self.canvas = tk.Canvas(self.root,width=1000,height=250,bg="black")
+        self.canvas.pack()
+
+    def draw_cells(self,cells):
+
+        self.canvas.delete("all")
+
+        x = 50
+
+        for cell in cells:
+
+            positions = [
+                (x,50),(x,100),(x,150),
+                (x+30,50),(x+30,100),(x+30,150)
+            ]
+
+            for i,(cx,cy) in enumerate(positions):
+
+                color = "green" if cell[i]=="1" else "gray"
+
+                self.canvas.create_oval(
+                    cx-10,cy-10,cx+10,cy+10,
+                    fill=color
+                )
+
+            x += 80
+
+        self.root.update()
+
+    def scroll(self,binary_cells,window=8):
+
+        padded = ["000000"]*window + binary_cells + ["000000"]*window
+
+        for i in range(len(padded)-window):
+
+            visible = padded[i:i+window]
+
+            self.draw_cells(visible)
+
+            time.sleep(0.3)
+
+
+Arduino Code
+
+
+String brailleData = "";
+
+int braillePins[6] = {2,3,4,5,6,7};
+
+void setup()
+{
+  Serial.begin(9600);
+
+  for(int i=0;i<6;i++)
+  {
+    pinMode(braillePins[i],OUTPUT);
+    digitalWrite(braillePins[i],LOW);
+  }
+}
+
+void loop()
+{
+  if(Serial.available())
+  {
+    brailleData = Serial.readStringUntil('\n');
+    brailleData.trim();
+
+    if(brailleData.length()==6)
+    {
+      displayBraille(brailleData);
+    }
+  }
+}
+
+void displayBraille(String pattern)
+{
+  resetDots();
+
+  for(int i=0;i<6;i++)
+  {
+    if(pattern.charAt(i)=='1')
+    {
+      digitalWrite(braillePins[i],HIGH);
+    }
+  }
+
+  delay(250);
+}
+
+void resetDots()
+{
+  for(int i=0;i<6;i++)
+  {
+    digitalWrite(braillePins[i],LOW);
+  }
+}
